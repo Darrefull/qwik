@@ -1,0 +1,46 @@
+# Isolated e2e tests for the Qwik Framework
+
+This package provides isolated e2e tests by generating a new application with local packages and then running tests again that code by executing it and verifying expected behavior.
+
+## Description
+
+Tests can be invoked by running `pnpm run test.e2e-isolated`.
+
+**Note that running e2e tests requires the workspace projects to be prebuilt manually!**
+
+E2E project does the following internally: 0. vitest is configured to run a setup function once prior to all tests. During the setup `@builder.io/qwik`, `@builder.io/qwik-city` and `eslint-plugin-qwik` packages will be packed with `pnpm pack` Those will be used at a step 2 for every test. Tarballs are located in `temp/tarballs` folder within this repo.
+
+1. Simulates `npm create qwik` locally using direct command `node packages/create-qwik/create-qwik.cjs playground {outputDir}`
+
+   - By default `outputDir` is an auto-generated one using `tmp` npm package. The application that is created here will be removed after the test is executed
+   - It is possible to install into custom folder using environment variable `TEMP_E2E_PATH`. Here's how the command would look like in this case: `TEMP_E2E_PATH=/Users/name/projects/tests pnpm run test.e2e-isolated`. Note that provided folder should exist. If custom path is used, generated application will not be removed after the test completes, which is helpful for debugging.
+
+2. Uses packed `@builder.io/qwik`, `@builder.io/qwik-city` and `eslint-plugin-qwik` packages to update package.json file of the generated application with `file:path-to-package.tgz`.
+
+3. Runs actual tests. Please pay attention at the `beforeAll` hook in the spec file
+
+```typescript
+beforeAll(() => {
+  const config = scaffoldQwikProject();
+  global.tmpDir = config.tmpDir;
+  global.pIds = [];
+
+  return async () => {
+    for (const pId of global.pIds) {
+      await promisifiedTreeKill(pId, 'SIGKILL');
+    }
+    config.cleanupFn();
+  };
+});
+```
+
+Notice that `beforeAll` returns a function, which will be executed after the test completes either with success or failure.
+
+Both `config.cleanupFn();` and `promisifiedTreeKill` there are extremely important:
+
+- `config.cleanupFn()` is used in order to remove temporary folder with generated project after the test is executed (again, it's not being removed if TEMP_E2E_PATH is provided).
+- `promisifiedTreeKill` should be used to remove any active ports as we are serving the app during the test execution. It is also being used in specific `it` statements, but we can get zombie processes in case particular test fails.
+
+## Adding new tests
+
+Right now we have only one test file within this project. This means only one test application will be created and used, which is good from the execution time standpoint. If more files are added, it shouldn't potentially be a problem as we have `fileParallelism: false` set in the `vite.config.ts`, which means only one test will be executed at a time. This obviously slows down the execution time, but is safer, because we're working with a real file system.
